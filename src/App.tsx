@@ -15,6 +15,8 @@ interface ApiUsageInfo {
   cost: number;
 }
 
+type FileType = "pdf" | "ppt" | "pptx" | "xls" | "xlsx" | "doc" | "docx" | "image" | "text" | null;
+
 interface Source {
   id: string;
   url: string;
@@ -22,6 +24,11 @@ interface Source {
   content: string;
   color: string;
   loadedAt: string;
+  // File-specific fields
+  isFile?: boolean;
+  fileType?: FileType;
+  filePath?: string;
+  fileDataUrl?: string; // Base64 data URL for preview
 }
 
 interface NoteSection {
@@ -943,6 +950,40 @@ function App() {
     setTotalCost(prev => prev + cost);
   }
 
+  // Helper: Get content from source (extract text from files if needed)
+  async function getSourceContent(source: Source): Promise<string> {
+    // If not a file, return content directly
+    if (!source.isFile) {
+      return source.content;
+    }
+
+    // If file already has extracted content, return it
+    if (source.content && source.content.trim()) {
+      return source.content;
+    }
+
+    // Extract text from file
+    if (source.fileDataUrl && source.fileType) {
+      try {
+        const extractedText = await invoke<string>("extract_text_from_file", {
+          fileData: source.fileDataUrl,
+          fileType: source.fileType,
+        });
+
+        // Cache extracted text in source
+        setSources(prev => prev.map(s =>
+          s.id === source.id ? { ...s, content: extractedText } : s
+        ));
+
+        return extractedText;
+      } catch (e) {
+        throw new Error(`파일에서 텍스트를 추출할 수 없습니다: ${e}`);
+      }
+    }
+
+    throw new Error("파일 데이터가 없습니다");
+  }
+
   // AI Actions
   async function handleTranslate() {
     const source = getActiveSource();
@@ -956,12 +997,13 @@ function App() {
     setActiveAction("translate");
 
     try {
+      const content = await getSourceContent(source);
       const response = await invoke<string>("translate_content", {
-        content: source.content,
+        content,
         targetLanguage: "Korean",
       });
       addNote(response, "translation", source.id, "claude");
-      updateApiUsage("claude", source.content, response);
+      updateApiUsage("claude", content, response);
     } catch (e) {
       setError(`Translation failed: ${e}`);
     } finally {
@@ -981,11 +1023,12 @@ function App() {
     setActiveAction("summarize");
 
     try {
+      const content = await getSourceContent(source);
       const response = await invoke<string>("summarize_content", {
-        content: source.content,
+        content,
       });
       addNote(response, "summary", source.id, "claude");
-      updateApiUsage("claude", source.content, response);
+      updateApiUsage("claude", content, response);
     } catch (e) {
       setError(`Summarization failed: ${e}`);
     } finally {
@@ -1001,18 +1044,19 @@ function App() {
       return;
     }
 
-    if (!source.content.trim()) {
-      setError("소스 내용이 비어있습니다");
-      return;
-    }
-
     setLoading(true);
     setError("");
 
     try {
-      const fullPrompt = `${template.prompt}\n\n내용:\n${source.content}`;
+      const content = await getSourceContent(source);
+      if (!content.trim()) {
+        setError("소스 내용이 비어있습니다");
+        return;
+      }
+
+      const fullPrompt = `${template.prompt}\n\n내용:\n${content}`;
       const response = await invoke<string>("ask_claude_content", {
-        content: source.content,
+        content,
         question: template.prompt,
       });
       addNote(`## ${template.icon} ${template.name}\n\n${response}`, "template", activeSourceId || undefined, "claude", template.id);
@@ -1465,6 +1509,68 @@ function App() {
     e.preventDefault();
   }
 
+  // Helper to determine file type from extension
+  function getFileType(fileName: string): FileType {
+    const ext = fileName.toLowerCase().split('.').pop() || '';
+    const typeMap: Record<string, FileType> = {
+      'pdf': 'pdf',
+      'ppt': 'ppt',
+      'pptx': 'pptx',
+      'xls': 'xls',
+      'xlsx': 'xlsx',
+      'doc': 'doc',
+      'docx': 'docx',
+      'png': 'image',
+      'jpg': 'image',
+      'jpeg': 'image',
+      'gif': 'image',
+      'webp': 'image',
+      'txt': 'text',
+      'md': 'text',
+    };
+    return typeMap[ext] || null;
+  }
+
+  // Supported file extensions for preview
+  const SUPPORTED_FILE_EXTENSIONS = [
+    '.pdf', '.ppt', '.pptx', '.xls', '.xlsx', '.doc', '.docx',
+    '.png', '.jpg', '.jpeg', '.gif', '.webp',
+    '.txt', '.md'
+  ];
+
+  // Add file source with preview (no text extraction for binary files)
+  async function addFileSource(file: File) {
+    const fileType = getFileType(file.name);
+
+    if (fileType === 'text') {
+      // For text files, read content as before
+      const text = await file.text();
+      addManualSource(text);
+      return;
+    }
+
+    // For binary files (PDF, PPT, XLS, etc.), create data URL for preview
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const newSource: Source = {
+        id: generateId(),
+        url: `file://${file.name}`,
+        title: file.name,
+        content: '', // No text extraction - preview only
+        color: SOURCE_COLORS[sources.length % SOURCE_COLORS.length],
+        loadedAt: new Date().toISOString(),
+        isFile: true,
+        fileType,
+        filePath: file.name,
+        fileDataUrl: dataUrl,
+      };
+      setSources(prev => [...prev, newSource]);
+      setActiveSourceId(newSource.id);
+    };
+    reader.readAsDataURL(file);
+  }
+
   // File drop handler
   async function handleFileDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -1472,9 +1578,10 @@ function App() {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (file.type === "text/plain" || file.name.endsWith(".txt") || file.name.endsWith(".md")) {
-        const text = await file.text();
-        addManualSource(text);
+      const ext = '.' + (file.name.split('.').pop()?.toLowerCase() || '');
+
+      if (SUPPORTED_FILE_EXTENSIONS.includes(ext)) {
+        await addFileSource(file);
       }
     }
   }
@@ -2035,16 +2142,69 @@ function App() {
                 ) : "Source Content"}
               </h2>
               <div className="panel-actions">
-                <button
-                  className={`small-button mode-toggle ${sourceEditMode ? "active" : "secondary"}`}
-                  onClick={() => setSourceEditMode(!sourceEditMode)}
-                >
-                  {sourceEditMode ? "View" : "Edit"}
-                </button>
+                {/* Hide Edit button for file sources (non-editable) */}
+                {!getActiveSource()?.isFile && (
+                  <button
+                    className={`small-button mode-toggle ${sourceEditMode ? "active" : "secondary"}`}
+                    onClick={() => setSourceEditMode(!sourceEditMode)}
+                  >
+                    {sourceEditMode ? "View" : "Edit"}
+                  </button>
+                )}
+                {/* Show file type badge for file sources */}
+                {getActiveSource()?.isFile && (
+                  <span className="file-type-badge">
+                    {getActiveSource()?.fileType?.toUpperCase()} 파일
+                  </span>
+                )}
               </div>
             </div>
             <div className="panel-content" ref={contentRef}>
-              {sourceEditMode ? (
+              {/* File Preview Mode */}
+              {getActiveSource()?.isFile ? (
+                <div className="file-preview-container">
+                  {getActiveSource()?.fileType === 'pdf' && getActiveSource()?.fileDataUrl && (
+                    <object
+                      data={getActiveSource()?.fileDataUrl}
+                      type="application/pdf"
+                      className="file-preview-pdf"
+                    >
+                      <p>PDF 미리보기를 지원하지 않는 브라우저입니다.</p>
+                    </object>
+                  )}
+                  {getActiveSource()?.fileType === 'image' && getActiveSource()?.fileDataUrl && (
+                    <img
+                      src={getActiveSource()?.fileDataUrl}
+                      alt={getActiveSource()?.title}
+                      className="file-preview-image"
+                    />
+                  )}
+                  {(getActiveSource()?.fileType === 'ppt' || getActiveSource()?.fileType === 'pptx') && (
+                    <div className="file-preview-placeholder">
+                      <div className="file-icon">📊</div>
+                      <p className="file-name">{getActiveSource()?.title}</p>
+                      <p className="file-type-info">PowerPoint 파일</p>
+                      <p className="file-note">미리보기가 지원되지 않습니다.<br/>AI 작업은 텍스트 추출 후 수행됩니다.</p>
+                    </div>
+                  )}
+                  {(getActiveSource()?.fileType === 'xls' || getActiveSource()?.fileType === 'xlsx') && (
+                    <div className="file-preview-placeholder">
+                      <div className="file-icon">📈</div>
+                      <p className="file-name">{getActiveSource()?.title}</p>
+                      <p className="file-type-info">Excel 파일</p>
+                      <p className="file-note">미리보기가 지원되지 않습니다.<br/>AI 작업은 텍스트 추출 후 수행됩니다.</p>
+                    </div>
+                  )}
+                  {(getActiveSource()?.fileType === 'doc' || getActiveSource()?.fileType === 'docx') && (
+                    <div className="file-preview-placeholder">
+                      <div className="file-icon">📄</div>
+                      <p className="file-name">{getActiveSource()?.title}</p>
+                      <p className="file-type-info">Word 파일</p>
+                      <p className="file-note">미리보기가 지원되지 않습니다.<br/>AI 작업은 텍스트 추출 후 수행됩니다.</p>
+                    </div>
+                  )}
+                </div>
+              ) : sourceEditMode ? (
                 <textarea
                   className="source-textarea"
                   value={getActiveSource()?.content || ""}
@@ -2085,15 +2245,13 @@ function App() {
                 <div
                   className="placeholder editable-placeholder"
                   onClick={() => setSourceEditMode(true)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const text = e.dataTransfer.getData("text/plain");
-                    if (text) addManualSource(text);
-                  }}
+                  onDrop={handleFileDrop}
                   onDragOver={handleDragOver}
                   tabIndex={0}
                 >
-                  Click to edit, paste content, or drop files here.
+                  클릭하여 편집하거나, 콘텐츠를 붙여넣거나,<br/>
+                  파일을 드래그 앤 드롭하세요.<br/>
+                  <span className="supported-files">(PDF, PPT, XLS, DOC, 이미지 지원)</span>
                 </div>
               )}
             </div>

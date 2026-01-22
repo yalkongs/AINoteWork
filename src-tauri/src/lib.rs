@@ -118,7 +118,8 @@ pub fn run() {
             ask_claude_content,
             ask_openai_content,
             ask_gemini_content,
-            ask_with_history
+            ask_with_history,
+            extract_text_from_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -26,3 +26,6 @@ anyhow = "1"
 thiserror = "1"
 dirs = "5"
 scraper = "0.22"
+base64 = "0.22"
+pdf-extract = "0.7"
+calamine = "0.26"  # For Excel files

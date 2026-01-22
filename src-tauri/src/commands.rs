@@ -2,7 +2,7 @@ use crate::ai_clients::AiClients;
 use crate::claude::ClaudeClient;
 use crate::mcp::{DatabaseInfo, McpClient, RecentDatabase};
 use crate::web::WebClient;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tauri::State;
 
 #[derive(Deserialize)]
@@ -390,4 +390,99 @@ pub async fn ask_with_history(
         }
         _ => Err(format!("Unknown model: {}", model)),
     }
+}
+
+// Extract text from file data (base64 encoded)
+#[tauri::command]
+pub async fn extract_text_from_file(
+    file_data: String,
+    file_type: String,
+) -> Result<String, String> {
+    use base64::Engine;
+
+    // Decode base64 data URL
+    let data = if file_data.contains(",") {
+        // Data URL format: data:mime;base64,xxxxx
+        file_data.split(',').nth(1).unwrap_or(&file_data)
+    } else {
+        &file_data
+    };
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| format!("Failed to decode base64: {}", e))?;
+
+    match file_type.as_str() {
+        "pdf" => extract_pdf_text(&bytes),
+        "xls" | "xlsx" => extract_excel_text(&bytes, &file_type),
+        "doc" | "docx" | "ppt" | "pptx" => {
+            // For Office formats, we return a placeholder message
+            // Full extraction would require additional libraries
+            Ok(format!(
+                "[{} 파일]\n\n이 파일 형식의 텍스트 추출은 현재 지원되지 않습니다.\n\
+                PDF 또는 Excel 파일을 사용하시거나, 텍스트를 직접 복사하여 붙여넣기 해주세요.",
+                file_type.to_uppercase()
+            ))
+        }
+        "image" => {
+            Ok("[이미지 파일]\n\n이미지에서 텍스트를 추출하려면 OCR이 필요합니다.\n\
+                현재는 이미지 미리보기만 지원됩니다.".to_string())
+        }
+        _ => Err(format!("Unsupported file type: {}", file_type)),
+    }
+}
+
+fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
+    pdf_extract::extract_text_from_mem(bytes)
+        .map_err(|e| format!("Failed to extract PDF text: {}", e))
+}
+
+fn extract_excel_text(bytes: &[u8], file_type: &str) -> Result<String, String> {
+    use calamine::{Reader, Xlsx, Xls};
+    use std::io::Cursor;
+
+    let cursor = Cursor::new(bytes);
+    let mut result = String::new();
+
+    match file_type {
+        "xlsx" => {
+            let mut workbook: Xlsx<_> = calamine::open_workbook_from_rs(cursor)
+                .map_err(|e| format!("Failed to open xlsx: {}", e))?;
+
+            for sheet_name in workbook.sheet_names().to_vec() {
+                result.push_str(&format!("## Sheet: {}\n\n", sheet_name));
+                if let Ok(range) = workbook.worksheet_range(&sheet_name) {
+                    for row in range.rows() {
+                        let row_str: Vec<String> = row.iter()
+                            .map(|cell| cell.to_string())
+                            .collect();
+                        result.push_str(&row_str.join("\t"));
+                        result.push('\n');
+                    }
+                }
+                result.push('\n');
+            }
+        }
+        "xls" => {
+            let mut workbook: Xls<_> = calamine::open_workbook_from_rs(cursor)
+                .map_err(|e| format!("Failed to open xls: {}", e))?;
+
+            for sheet_name in workbook.sheet_names().to_vec() {
+                result.push_str(&format!("## Sheet: {}\n\n", sheet_name));
+                if let Ok(range) = workbook.worksheet_range(&sheet_name) {
+                    for row in range.rows() {
+                        let row_str: Vec<String> = row.iter()
+                            .map(|cell| cell.to_string())
+                            .collect();
+                        result.push_str(&row_str.join("\t"));
+                        result.push('\n');
+                    }
+                }
+                result.push('\n');
+            }
+        }
+        _ => return Err(format!("Unsupported Excel format: {}", file_type)),
+    }
+
+    Ok(result)
 }
