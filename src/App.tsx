@@ -1574,7 +1574,10 @@ function App() {
   // File drop handler
   async function handleFileDrop(e: React.DragEvent) {
     e.preventDefault();
+    e.stopPropagation();
+
     const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -1582,8 +1585,17 @@ function App() {
 
       if (SUPPORTED_FILE_EXTENSIONS.includes(ext)) {
         await addFileSource(file);
+      } else {
+        setError(`지원하지 않는 파일 형식입니다: ${file.name}`);
       }
     }
+  }
+
+  // Combined drag over handler for file drops
+  function handleFileDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
   }
 
   const canPerformAction = apiKeySet && sources.length > 0 && activeSourceId;
@@ -2036,7 +2048,7 @@ function App() {
         <div
           className="url-bar-section"
           onDrop={handleFileDrop}
-          onDragOver={handleDragOver}
+          onDragOver={handleFileDragOver}
         >
           <div className="url-bar">
             <input
@@ -2243,15 +2255,17 @@ function App() {
                 </div>
               ) : (
                 <div
-                  className="placeholder editable-placeholder"
+                  className="placeholder editable-placeholder file-drop-zone"
                   onClick={() => setSourceEditMode(true)}
                   onDrop={handleFileDrop}
-                  onDragOver={handleDragOver}
+                  onDragOver={handleFileDragOver}
                   tabIndex={0}
                 >
-                  클릭하여 편집하거나, 콘텐츠를 붙여넣거나,<br/>
-                  파일을 드래그 앤 드롭하세요.<br/>
-                  <span className="supported-files">(PDF, PPT, XLS, DOC, 이미지 지원)</span>
+                  <div className="drop-zone-content">
+                    <span className="drop-icon">📁</span>
+                    <p>클릭하여 편집하거나, 콘텐츠를 붙여넣거나,<br/>파일을 드래그 앤 드롭하세요.</p>
+                    <span className="supported-files">(PDF, PPT, XLS, DOC, 이미지 지원)</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -2791,6 +2805,26 @@ function App() {
         </div>
       )}
 
+      {/* Loading Overlay */}
+      {loading && (
+        <div className="loading-overlay">
+          <div className="loading-modal">
+            <div className="loading-spinner-large"></div>
+            <div className="loading-message">
+              {activeAction === "translate" && "번역 중..."}
+              {activeAction === "summarize" && "요약 중..."}
+              {activeAction === "question" && "AI 응답 대기 중..."}
+              {!activeAction && "처리 중..."}
+            </div>
+            <div className="loading-submessage">
+              {activeAction === "translate" && "문서를 한국어로 번역하고 있습니다"}
+              {activeAction === "summarize" && "핵심 내용을 요약하고 있습니다"}
+              {activeAction === "question" && "질문에 대한 답변을 생성하고 있습니다"}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Status Bar */}
       {!focusMode && (
         <footer className="status-bar">
@@ -2798,9 +2832,9 @@ function App() {
             <div className="status-item loading-status">
               <span className="loading-spinner"></span>
               <span className="loading-text">
-                {activeAction === "translate" && "Translating..."}
-                {activeAction === "summarize" && "Summarizing..."}
-                {activeAction === "question" && "Asking..."}
+                {activeAction === "translate" && "번역 중..."}
+                {activeAction === "summarize" && "요약 중..."}
+                {activeAction === "question" && "응답 대기 중..."}
               </span>
             </div>
           )}

@@ -1673,6 +1673,89 @@ body {
   line-height: 1.5;
 }
 
+/* File Drop Zone */
+.file-drop-zone {
+  transition: all 0.3s ease;
+}
+
+.file-drop-zone:hover {
+  border-color: var(--accent-color);
+  background-color: rgba(79, 70, 229, 0.1);
+}
+
+.drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.drop-zone-content .drop-icon {
+  font-size: 3rem;
+  opacity: 0.7;
+}
+
+.drop-zone-content p {
+  margin: 0;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.loading-modal {
+  background-color: var(--panel-bg);
+  border-radius: 16px;
+  padding: 2.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  min-width: 280px;
+}
+
+.loading-spinner-large {
+  width: 50px;
+  height: 50px;
+  border: 4px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.loading-message {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.loading-submessage {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Selected Text Indicator for Ask */
 .selected-text-indicator {
   display: flex;
