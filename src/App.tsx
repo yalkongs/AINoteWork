@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
+import { readFile } from "@tauri-apps/plugin-fs";
 import ReactMarkdown from "react-markdown";
 
 type ActionType = "translate" | "summarize" | "question";
@@ -278,6 +280,104 @@ function App() {
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, []);
+
+  // Tauri file drop event listener
+  useEffect(() => {
+    const setupFileDrop = async () => {
+      const unlisten = await listen<{ paths: string[] }>("tauri://drag-drop", async (event) => {
+        console.log("[Tauri Drop] Event received:", event.payload);
+        const paths = event.payload.paths;
+
+        for (const filePath of paths) {
+          const fileName = filePath.split('/').pop() || filePath;
+          const ext = fileName.split('.').pop()?.toLowerCase() || '';
+          const fileType = getFileTypeFromExt(ext);
+
+          console.log("[Tauri Drop] Processing:", fileName, "Type:", fileType);
+
+          if (!fileType) {
+            setError(`지원하지 않는 파일 형식입니다: ${fileName}`);
+            continue;
+          }
+
+          try {
+            // Read file using Tauri FS plugin
+            const fileData = await readFile(filePath);
+            const base64 = btoa(
+              fileData.reduce((data, byte) => data + String.fromCharCode(byte), '')
+            );
+
+            // Determine MIME type
+            const mimeTypes: Record<string, string> = {
+              pdf: 'application/pdf',
+              png: 'image/png',
+              jpg: 'image/jpeg',
+              jpeg: 'image/jpeg',
+              gif: 'image/gif',
+              webp: 'image/webp',
+              xls: 'application/vnd.ms-excel',
+              xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              doc: 'application/msword',
+              docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              ppt: 'application/vnd.ms-powerpoint',
+              pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            };
+            const mimeType = mimeTypes[ext] || 'application/octet-stream';
+            const dataUrl = `data:${mimeType};base64,${base64}`;
+
+            const newSource: Source = {
+              id: generateId(),
+              url: `file://${filePath}`,
+              title: fileName,
+              content: '',
+              color: SOURCE_COLORS[sources.length % SOURCE_COLORS.length],
+              loadedAt: new Date().toISOString(),
+              isFile: true,
+              fileType,
+              filePath,
+              fileDataUrl: dataUrl,
+            };
+
+            setSources(prev => [...prev, newSource]);
+            setActiveSourceId(newSource.id);
+            console.log("[Tauri Drop] Source added:", fileName);
+          } catch (err) {
+            console.error("[Tauri Drop] Error reading file:", err);
+            setError(`파일을 읽는 중 오류가 발생했습니다: ${fileName}`);
+          }
+        }
+      });
+
+      return unlisten;
+    };
+
+    const unlistenPromise = setupFileDrop();
+
+    return () => {
+      unlistenPromise.then(unlisten => unlisten());
+    };
+  }, [sources.length]);
+
+  // Helper to get file type from extension (for Tauri drop)
+  function getFileTypeFromExt(ext: string): FileType {
+    const typeMap: Record<string, FileType> = {
+      'pdf': 'pdf',
+      'ppt': 'ppt',
+      'pptx': 'pptx',
+      'xls': 'xls',
+      'xlsx': 'xlsx',
+      'doc': 'doc',
+      'docx': 'docx',
+      'png': 'image',
+      'jpg': 'image',
+      'jpeg': 'image',
+      'gif': 'image',
+      'webp': 'image',
+      'txt': 'text',
+      'md': 'text',
+    };
+    return typeMap[ext] || null;
+  }
 
   // Clipboard monitoring
   useEffect(() => {
@@ -1539,8 +1639,10 @@ function App() {
   ];
 
   // Add file source with preview (no text extraction for binary files)
-  async function addFileSource(file: File) {
+  async function addFileSource(file: File): Promise<void> {
     const fileType = getFileType(file.name);
+
+    console.log('[File Drop] Processing file:', file.name, 'Type:', fileType, 'Size:', file.size);
 
     if (fileType === 'text') {
       // For text files, read content as before
@@ -1549,26 +1651,43 @@ function App() {
       return;
     }
 
+    if (!fileType) {
+      setError(`지원하지 않는 파일 형식입니다: ${file.name}`);
+      return;
+    }
+
     // For binary files (PDF, PPT, XLS, etc.), create data URL for preview
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const newSource: Source = {
-        id: generateId(),
-        url: `file://${file.name}`,
-        title: file.name,
-        content: '', // No text extraction - preview only
-        color: SOURCE_COLORS[sources.length % SOURCE_COLORS.length],
-        loadedAt: new Date().toISOString(),
-        isFile: true,
-        fileType,
-        filePath: file.name,
-        fileDataUrl: dataUrl,
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => {
+        console.log('[File Drop] FileReader loaded successfully');
+        const dataUrl = reader.result as string;
+        const newSource: Source = {
+          id: generateId(),
+          url: `file://${file.name}`,
+          title: file.name,
+          content: '', // No text extraction - preview only
+          color: SOURCE_COLORS[sources.length % SOURCE_COLORS.length],
+          loadedAt: new Date().toISOString(),
+          isFile: true,
+          fileType,
+          filePath: file.name,
+          fileDataUrl: dataUrl,
+        };
+        setSources(prev => [...prev, newSource]);
+        setActiveSourceId(newSource.id);
+        resolve();
       };
-      setSources(prev => [...prev, newSource]);
-      setActiveSourceId(newSource.id);
-    };
-    reader.readAsDataURL(file);
+
+      reader.onerror = () => {
+        console.error('[File Drop] FileReader error:', reader.error);
+        setError(`파일을 읽는 중 오류가 발생했습니다: ${file.name}`);
+        reject(reader.error);
+      };
+
+      reader.readAsDataURL(file);
+    });
   }
 
   // File drop handler
@@ -1576,15 +1695,27 @@ function App() {
     e.preventDefault();
     e.stopPropagation();
 
+    console.log('[File Drop] Drop event triggered');
+    console.log('[File Drop] Files:', e.dataTransfer.files);
+    console.log('[File Drop] Items:', e.dataTransfer.items);
+
     const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0) {
+      console.log('[File Drop] No files in drop event');
+      return;
+    }
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const ext = '.' + (file.name.split('.').pop()?.toLowerCase() || '');
+      console.log('[File Drop] File:', file.name, 'Extension:', ext);
 
       if (SUPPORTED_FILE_EXTENSIONS.includes(ext)) {
-        await addFileSource(file);
+        try {
+          await addFileSource(file);
+        } catch (err) {
+          console.error('[File Drop] Error adding file source:', err);
+        }
       } else {
         setError(`지원하지 않는 파일 형식입니다: ${file.name}`);
       }
@@ -2143,7 +2274,11 @@ function App() {
       <div className="main-content">
         {/* Left Panel - Source Content */}
         {!focusMode && (
-          <div className="panel left-panel">
+          <div
+            className="panel left-panel"
+            onDrop={handleFileDrop}
+            onDragOver={handleFileDragOver}
+          >
             <div className="panel-header">
               <h2>
                 {getActiveSource() ? (
