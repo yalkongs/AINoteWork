@@ -2940,36 +2940,17 @@ function App() {
         </div>
       )}
 
-      {/* Loading Overlay */}
-      {loading && (
-        <div className="loading-overlay">
-          <div className="loading-modal">
-            <div className="loading-spinner-large"></div>
-            <div className="loading-message">
-              {activeAction === "translate" && "번역 중..."}
-              {activeAction === "summarize" && "요약 중..."}
-              {activeAction === "question" && "AI 응답 대기 중..."}
-              {!activeAction && "처리 중..."}
-            </div>
-            <div className="loading-submessage">
-              {activeAction === "translate" && "문서를 한국어로 번역하고 있습니다"}
-              {activeAction === "summarize" && "핵심 내용을 요약하고 있습니다"}
-              {activeAction === "question" && "질문에 대한 답변을 생성하고 있습니다"}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Status Bar */}
       {!focusMode && (
-        <footer className="status-bar">
+        <footer className={`status-bar ${loading ? "status-bar-loading" : ""}`}>
           {loading && (
-            <div className="status-item loading-status">
-              <span className="loading-spinner"></span>
-              <span className="loading-text">
-                {activeAction === "translate" && "번역 중..."}
-                {activeAction === "summarize" && "요약 중..."}
-                {activeAction === "question" && "응답 대기 중..."}
+            <div className="status-item loading-status-enhanced">
+              <span className="loading-spinner-enhanced"></span>
+              <span className="loading-text-enhanced">
+                {activeAction === "translate" && "🌐 번역 중..."}
+                {activeAction === "summarize" && "📝 요약 중..."}
+                {activeAction === "question" && "💬 AI 응답 대기 중..."}
+                {!activeAction && "⏳ 처리 중..."}
               </span>
             </div>
           )}
